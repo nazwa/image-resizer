@@ -6,16 +6,16 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"time"
 
-	"github.com/gregjones/httpcache"
+	"github.com/kennygrant/sanitize"
+	"github.com/minio/minio-go"
 	"github.com/stvp/rollbar"
 	"willnorris.com/go/imageproxy"
 )
 
 type ImageProxy struct {
-	*imageproxy.Proxy
 }
 
 // ServeHTTP handles image requests.
@@ -36,102 +36,54 @@ func (p *ImageProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := imageproxy.NewRequest(r, p.DefaultBaseURL)
+	// Step 1 - Generate resized filename
+	// Step 2 - Check if image exists based on etag / filename
+	// Step 3 - If yes, serve
+	// Step 4 - If no - transform
+	// Step 5 - Serve
+	// Step 6 - Upload to S3
+
+	path := r.URL.Path[1:]
+
+	options := imageproxy.ParseOptions(path)
+	filename := sanitize.BaseName(path)
+	bucketName := r.Host
+
+	s3Client, err := minio.New("s3.amazonaws.com", config.Services.S3.AccessKey, config.Services.S3.SecretKey, true)
 	if err != nil {
-		msg := fmt.Sprintf("invalid request URL: %v", err)
-		logger.Error(msg)
-		http.Error(w, msg, http.StatusBadRequest)
-		return
+		log.Fatalln(err)
 	}
 
-	// assign static settings from proxy to req.Options
-	req.Options.ScaleUp = p.ScaleUp
+	// Step 2 - check for cached image
+	existingObjectReader, err := s3Client.GetObject(bucketName+"/_cache", filename)
+	if err == nil {
+		defer existingObjectReader.Close()
 
-	resp, err := p.Client.Get(req.String())
-	if err != nil {
-		msg := fmt.Sprintf("error fetching remote image: %v", err)
-		logger.Error(msg)
-		http.Error(w, msg, http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
-
-	cached := resp.Header.Get(httpcache.XFromCache)
-	logger.Infof("request: %v (served from cache: %v)", *req, cached == "1")
-
-	// We want to override cache headers to force long term caching
-	//	copyHeader(w, resp, "Cache-Control")
-	w.Header().Add("Cache-Control", "public, max-age=31536000")
-
-	copyHeader(w, resp, "Last-Modified")
-	copyHeader(w, resp, "Expires")
-	copyHeader(w, resp, "Etag")
-	copyHeader(w, resp, "Link")
-
-	if is304 := check304(r, resp); is304 {
-		w.WriteHeader(http.StatusNotModified)
-		return
+		w.Header().Set("Cache-Control", "public,max-age:912839172")
+		_, err = io.Copy(w, existingObjectReader)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	copyHeader(w, resp, "Content-Length")
-	copyHeader(w, resp, "Content-Type")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
+	r.URL.Host = r.Host
+	// Step 4 - Check for source image and transform it
+	newR, e := imageproxy.NewRequest(r, nil)
+	fmt.Println(newR, e, options)
 
-// NewProxy constructs a new proxy.  The provided http RoundTripper will be
-// used to fetch remote URLs.  If nil is provided, http.DefaultTransport will
-// be used.
-func NewProxy(transport http.RoundTripper, cache imageproxy.Cache) *ImageProxy {
-	if transport == nil {
-		transport = http.DefaultTransport
-	}
-	if cache == nil {
-		cache = imageproxy.NopCache
-	}
-	proxy := ImageProxy{
-		Proxy: &imageproxy.Proxy{
-			Cache: cache,
-		},
-	}
+	//	img, err := Transform(b, opt)
+	//	if err != nil {
+	//		glog.Errorf("error transforming image: %v", err)
+	//		img = b
+	//	}
 
-	client := new(http.Client)
-	client.Transport = &httpcache.Transport{
-		Transport:           &imageproxy.TransformingTransport{transport, client},
-		Cache:               cache,
-		MarkCachedResponses: true,
-	}
+	//	// replay response with transformed image and updated content length
+	//	buf := new(bytes.Buffer)
+	//	fmt.Fprintf(buf, "%s %s\n", resp.Proto, resp.Status)
+	//	resp.Header.WriteSubset(buf, map[string]bool{"Content-Length": true})
+	//	fmt.Fprintf(buf, "Content-Length: %d\n\n", len(img))
+	//	buf.Write(img)
 
-	proxy.Client = client
-
-	return &proxy
-}
-
-// check304 checks whether we should send a 304 Not Modified in response to
-// req, based on the response resp.  This is determined using the last modified
-// time and the entity tag of resp.
-func check304(req *http.Request, resp *http.Response) bool {
-	// TODO(willnorris): if-none-match header can be a comma separated list
-	// of multiple tags to be matched, or the special value "*" which
-	// matches all etags
-	etag := resp.Header.Get("Etag")
-	if etag != "" && etag == req.Header.Get("If-None-Match") {
-		return true
-	}
-
-	lastModified, err := time.Parse(time.RFC1123, resp.Header.Get("Last-Modified"))
-	if err != nil {
-		return false
-	}
-	ifModSince, err := time.Parse(time.RFC1123, req.Header.Get("If-Modified-Since"))
-	if err != nil {
-		return false
-	}
-	if lastModified.Before(ifModSince) {
-		return true
-	}
-
-	return false
 }
 
 func copyHeader(w http.ResponseWriter, r *http.Response, header string) {

@@ -59,21 +59,7 @@ func (p *program) run() error {
 
 	p.init()
 
-	c, err := parseCache()
-	if err != nil {
-		logger.Error(err)
-		return err
-	}
-
-	im := NewProxy(nil, c)
-
-	im.DefaultBaseURL, err = url.Parse(config.Resizer.BaseUrl)
-	if err != nil {
-		logger.Errorf("error parsing baseURL: %v", err)
-		return err
-	}
-
-	im.ScaleUp = config.Resizer.ScaleUp
+	im := &ImageProxy{}
 
 	server := &http.Server{
 		Addr:    ":" + config.Port,
