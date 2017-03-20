@@ -1,19 +1,16 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
-	"net/url"
 	"runtime"
 
-	"github.com/gregjones/httpcache"
+	"github.com/gin-gonic/gin"
 	"github.com/kardianos/service"
+	"github.com/minio/minio-go"
 	"github.com/sqs/s3"
 	"github.com/sqs/s3/s3util"
 	"github.com/stvp/rollbar"
 	"github.com/yvasiyarov/gorelic"
 	"sourcegraph.com/sourcegraph/s3cache"
-	"willnorris.com/go/imageproxy"
 )
 
 // Program structures.
@@ -22,6 +19,7 @@ type program struct {
 	exit chan struct{}
 
 	gorelicAgent *gorelic.Agent
+	S3           *minio.Client
 }
 
 func (p *program) Start(s service.Service) error {
@@ -50,6 +48,13 @@ func (p *program) init() {
 		p.gorelicAgent.Run()
 	}
 
+	var err error
+	s3Config := config.Services.S3
+	p.S3, err = minio.New(s3Config.BucketUrl, s3Config.AccessKey, s3Config.SecretKey, true)
+	if err != nil {
+		logger.Error(err)
+		panic(err)
+	}
 }
 
 func (p *program) run() error {
@@ -59,50 +64,13 @@ func (p *program) run() error {
 
 	p.init()
 
-	c, err := parseCache()
-	if err != nil {
-		logger.Error(err)
-		return err
-	}
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(loggerMiddleware(logger))
 
-	im := NewProxy(nil, c)
+	NewResizeHandler(r.Group("/"), p.S3)
 
-	im.DefaultBaseURL, err = url.Parse(config.Resizer.BaseUrl)
-	if err != nil {
-		logger.Errorf("error parsing baseURL: %v", err)
-		return err
-	}
-
-	im.ScaleUp = config.Resizer.ScaleUp
-
-	server := &http.Server{
-		Addr:    ":" + config.Port,
-		Handler: im,
-	}
-
-	server.Handler = p.gorelicAgent.WrapHTTPHandler(server.Handler)
-
-	return server.ListenAndServe()
-}
-
-// parseCache parses the cache-related flags and returns the specified Cache implementation.
-func parseCache() (imageproxy.Cache, error) {
-	if config.Resizer.Cache == "memory" {
-		return httpcache.NewMemoryCache(), nil
-	}
-
-	u, err := url.Parse(config.Resizer.Cache)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing cache flag: %v", err)
-	}
-
-	switch u.Scheme {
-	case "s3":
-		u.Scheme = "https"
-		return NewS3Cache(u.String()), nil
-	default:
-		return nil, fmt.Errorf("Invalid cache type %s", u.Scheme)
-	}
+	return r.Run(":" + config.Port)
 }
 
 // New returns a new Cache with underlying storage in Amazon S3. The bucketURL
