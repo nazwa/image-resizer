@@ -23,6 +23,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"willnorris.com/go/imageproxy"
 )
 
 const (
@@ -35,41 +37,6 @@ const (
 	optSizeDelimiter   = "x"
 	optScaleUp         = "scaleUp"
 )
-
-// Options specifies transformations to be performed on the requested image.
-type Options struct {
-	// See ParseOptions for interpretation of Width and Height values
-	Width  float64
-	Height float64
-
-	// If true, resize the image to fit in the specified dimensions.  Image
-	// will not be cropped, and aspect ratio will be maintained.
-	Fit bool
-
-	// Rotate image the specified degrees counter-clockwise.  Valid values
-	// are 90, 180, 270.
-	Rotate int
-
-	FlipVertical   bool
-	FlipHorizontal bool
-
-	// Quality of output image
-	Quality int
-
-	// HMAC Signature for signed requests.
-	Signature string
-
-	// Allow image to scale beyond its original dimensions.  This value
-	// will always be overwritten by the value of Proxy.ScaleUp.
-	ScaleUp bool
-}
-
-// transform returns whether o includes transformation options.  Some fields
-// are not transform related at all (like Signature), and others only apply in
-// the presence of other fields (like Fit and Quality).
-func (o Options) transform() bool {
-	return o.Width != 0 || o.Height != 0 || o.Rotate != 0 || o.FlipHorizontal || o.FlipVertical
-}
 
 // ParseOptions parses str as a list of comma separated transformation options.
 // The following options can be specified in any order:
@@ -128,8 +95,8 @@ func (o Options) transform() bool {
 // 	100,r90   - 100 pixels square, rotated 90 degrees
 // 	100,fv,fh - 100 pixels square, flipped horizontal and vertical
 // 	200x,q80  - 200 pixels wide, proportional height, 80% quality
-func ParseOptions(str string) Options {
-	var options Options
+func ParseOptions(str string) imageproxy.Options {
+	var options imageproxy.Options
 
 	for _, opt := range strings.Split(str, ",") {
 		switch {
