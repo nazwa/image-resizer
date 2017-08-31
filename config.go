@@ -1,35 +1,36 @@
 package main
 
-import (
-	"github.com/kardianos/service"
+var (
+	// Debug var to switch mode from outside
+	debug string
+	// CommitHash exported to assign it from main.go
+	commitHash string
 )
 
-// Config represents the configuration information.
-type ConfigStruct struct {
-	Debug    bool
-	Port     string
-	Root     string `json:"-"`
-	Services struct {
-		AppName string
-		Rollbar struct {
-			Token string
-		}
-		S3 struct {
-			AccessKey string
-			SecretKey string
-			BucketUrl string
-		}
-		NewRelic struct {
-			Token   string
-			Verbose bool
-		}
-	}
-	Service service.Config
-	Resizer struct {
-		BaseUrl string
-		ScaleUp bool
-		Cache   string
-	}
-}
+// Most easiest way to configure
+// an application is define config as
+// yaml string and then parse it into
+// map.
+// How it works see here:
+//     https://github.com/olebedev/config
+var confString = `
+debug: true
+port: 80
+title: Image Resizer
+services:
+  appName:
+  rollbar:
+    token:
+  s3:
+    accessKey:
+	secretKey:
+	bucketUrl:
+  newRelic:
+    token:
+	verbose:
+resizer:
+  baseUrl:
+  scaleUp:
+  cache:  
 
-var config = ConfigStruct{}
+`

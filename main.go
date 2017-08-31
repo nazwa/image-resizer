@@ -1,73 +1,81 @@
 package main
 
 import (
-	"encoding/json"
-	"flag"
-	"log"
-	"os"
-	"path/filepath"
-
-	"github.com/kardianos/osext"
-	"github.com/kardianos/service"
+	"github.com/gin-gonic/gin"
+	"github.com/minio/minio-go"
+	"github.com/olebedev/config"
+	"github.com/sqs/s3"
+	"github.com/sqs/s3/s3util"
+	"github.com/stvp/rollbar"
+	"github.com/yvasiyarov/gorelic"
+	"sourcegraph.com/sourcegraph/s3cache"
 )
 
-func loadJsonFile(fullPath string, target interface{}) {
-	configFile, err := os.Open(fullPath)
-	if err != nil {
-		panic(err)
-	}
+var (
+	gorelicAgent *gorelic.Agent
+	S3           *minio.Client
+	cfg          *config.Config
+)
 
-	jsonParser := json.NewDecoder(configFile)
-	if err = jsonParser.Decode(target); err != nil {
-		panic(err)
+// New returns a new Cache with underlying storage in Amazon S3. The bucketURL
+// is the full URL to the bucket on Amazon S3, including the bucket name and AWS
+// region (e.g., "https://s3-us-west-2.amazonaws.com/mybucket").
+//
+// The environment variables AWS_ACCESS_KEY_ID and AWS_SECRET_KEY are used as the AWS
+// credentials. To use different credentials, modify the returned Cache object
+// or construct a Cache object manually.
+func NewS3Cache(bucketURL string) *s3cache.Cache {
+	return &s3cache.Cache{
+		Config: s3util.Config{
+			Keys: &s3.Keys{
+				AccessKey: cfg.UString("services.s3.accessKey"),
+				SecretKey: cfg.UString("services.s3.secretKey"),
+			},
+			Service: s3.DefaultService,
+		},
+		BucketURL: bucketURL,
 	}
 }
 
-var logger service.Logger
-
-// Service setup.
-//   Define service config.
-//   Create the service.
-//   Setup the logger.
-//   Handle service controls (optional).
-//   Run the service.
 func main() {
-	root, _ := osext.ExecutableFolder()
-	loadJsonFile(filepath.Join(root, "config.json"), &config)
-
-	svcFlag := flag.String("service", "", "Control the system service.")
-	flag.Parse()
-
-	prg := &program{}
-	s, err := service.New(prg, &config.Service)
+	// Parse config yaml string from ./conf.go
+	var err error
+	cfg, err = config.ParseYaml(confString)
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
-	errs := make(chan error, 5)
-	logger, err = s.Logger(errs)
-	if err != nil {
-		log.Fatal(err)
+	cfg.Env()
+
+	rollbar.Token = cfg.UString("services.rollbar.token")
+	rollbar.Environment = cfg.UString("services.appName")
+
+	gorelicAgent = gorelic.NewAgent()
+	gorelicAgent.Verbose = cfg.UBool("services.newRelic.verbose")
+	gorelicAgent.NewrelicLicense = cfg.UString("services.newRelic.token")
+	gorelicAgent.NewrelicName = cfg.UString("services.appName")
+
+	if gorelicAgent.NewrelicLicense != "" {
+		gorelicAgent.Run()
 	}
 
-	go func() {
-		for {
-			err := <-errs
-			if err != nil {
-				logger.Error(err)
-			}
-		}
-	}()
-
-	if len(*svcFlag) != 0 {
-		err := service.Control(s, *svcFlag)
-		if err != nil {
-			logger.Infof("Valid actions: %q\n", service.ControlAction)
-			logger.Error(err)
-		}
-		return
-	}
-	err = s.Run()
+	S3, err = minio.New(
+		cfg.UString("services.s3.bucketUrl"),
+		cfg.UString("services.s3.accessKey"),
+		cfg.UString("services.s3.secretKey"),
+		true,
+	)
 	if err != nil {
-		logger.Error(err)
+		panic(err)
+	}
+
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(loggerMiddleware())
+
+	NewResizeHandler(r.Group("/"), S3)
+
+	err = r.Run(":" + cfg.UString("port"))
+	if err != nil {
+		panic(err)
 	}
 }

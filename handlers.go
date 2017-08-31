@@ -2,11 +2,16 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/stvp/rollbar"
 
 	"github.com/gin-gonic/gin"
 	"github.com/minio/minio-go"
@@ -80,9 +85,9 @@ func (this *ResizeHandler) Resize(c *gin.Context) {
 	c.Status(200)
 	io.Copy(c.Writer, buf)
 
-	go func() {
+	go func(reqCopy *gin.Context) {
 		objectName := parts[1] + "/" + parts[2]
-		logger.Infof("Upload started for %s/%s", parts[0], objectName)
+		log.Printf("Upload started for %s/%s", parts[0], objectName)
 
 		_, err := this.S3.StatObject(parts[0], objectName)
 
@@ -90,7 +95,14 @@ func (this *ResizeHandler) Resize(c *gin.Context) {
 			errResp := err.(minio.ErrorResponse)
 			if errResp.Code != "NoSuchKey" {
 				// This is a legit error and log it
-				logger.Errorf("Stat failed for %s/%s. %s: %s", parts[0], objectName, errResp.Code, errResp.Message)
+				errorText := errors.New(
+					fmt.Sprintf(
+						"Stat failed for %s/%s. %s: %s",
+						parts[0], objectName, errResp.Code, errResp.Message,
+					),
+				)
+				log.Printf(errorText.Error())
+				rollbar.RequestError(rollbar.ERR, reqCopy.Request, errorText)
 				return
 			}
 			// Otherwise carry on! 404 is good!
@@ -99,10 +111,17 @@ func (this *ResizeHandler) Resize(c *gin.Context) {
 		buf = bytes.NewBuffer(finalImage)
 		_, err = this.S3.PutObject(parts[0], objectName, buf, fileInfo.ContentType)
 		if err != nil {
-			logger.Errorf("Upload failed for %s/%s with message: %s", parts[0], objectName, err)
+			errorText := errors.New(
+				fmt.Sprintf(
+					"Upload failed for %s/%s with message: %s",
+					parts[0], objectName, err,
+				),
+			)
+			log.Printf(errorText.Error())
+			rollbar.RequestError(rollbar.ERR, reqCopy.Request, errorText)
 			return
 		}
 
-		logger.Infof("Upload finished for %s/%s", parts[0], objectName)
-	}()
+		log.Printf("Upload finished for %s/%s", parts[0], objectName)
+	}(c.Copy())
 }
