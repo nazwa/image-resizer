@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -55,29 +54,32 @@ func (this *ResizeHandler) Resize(c *gin.Context) {
 	// 2: format 600x
 	// 3: asset b8a99f3580/Capture0019-7489-Edit.jpg
 	options := ParseOptions(parts[1])
+	optionsString := options.String()
 
-	reader, err := this.S3.GetObject(parts[0], parts[2])
-	defer reader.Close()
+	fmt.Println(options)
 
-	fileInfo, err := reader.Stat()
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
+	bucketName := parts[0]
+	originalFileName := parts[2]
+	resizedFilename := optionsString + "/" + parts[2]
+
+	if cachedFile := this.getCachedFile(bucketName, resizedFilename); cachedFile != nil {
+		fileInfo, err := cachedFile.Stat()
+		if err != nil {
+			c.AbortWithError(http.StatusInternalServerError, err)
+			return
+		}
+
+		c.Header("Content-Type", fileInfo.ContentType)
+		//		c.Header("Content-Length", strconv.FormatInt(int64(buf.Len()), 10))
+		c.Header("Last-Modified", fileInfo.LastModified.Format(http.TimeFormat))
+		c.Status(200)
+
 		return
 	}
 
-	body, err := ioutil.ReadAll(reader)
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
+	resizedFile, fileInfo := this.resizeFile(bucketName, originalFileName, options)
 
-	finalImage, err := imageproxy.Transform(body, options)
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
-
-	buf := bytes.NewBuffer(finalImage)
+	buf := bytes.NewBuffer(resizedFile)
 
 	c.Header("Content-Type", fileInfo.ContentType)
 	c.Header("Content-Length", strconv.FormatInt(int64(buf.Len()), 10))
@@ -85,43 +87,74 @@ func (this *ResizeHandler) Resize(c *gin.Context) {
 	c.Status(200)
 	io.Copy(c.Writer, buf)
 
-	go func(reqCopy *gin.Context) {
-		objectName := parts[1] + "/" + parts[2]
-		log.Printf("Upload started for %s/%s", parts[0], objectName)
+	go this.uploadFile(bucketName, resizedFilename, fileInfo.ContentType, resizedFile)
+}
 
-		_, err := this.S3.StatObject(parts[0], objectName)
+func (this *ResizeHandler) getCachedFile(bucketName, fileName string) *minio.Object {
+	reader, _ := this.S3.GetObject(bucketName, fileName, minio.GetObjectOptions{})
 
-		if err != nil {
-			errResp := err.(minio.ErrorResponse)
-			if errResp.Code != "NoSuchKey" {
-				// This is a legit error and log it
-				errorText := errors.New(
-					fmt.Sprintf(
-						"Stat failed for %s/%s. %s: %s",
-						parts[0], objectName, errResp.Code, errResp.Message,
-					),
-				)
-				log.Printf(errorText.Error())
-				rollbar.RequestError(rollbar.ERR, reqCopy.Request, errorText)
-				return
-			}
-			// Otherwise carry on! 404 is good!
-		}
+	return reader
+}
 
-		buf = bytes.NewBuffer(finalImage)
-		_, err = this.S3.PutObject(parts[0], objectName, buf, fileInfo.ContentType)
-		if err != nil {
-			errorText := errors.New(
-				fmt.Sprintf(
-					"Upload failed for %s/%s with message: %s",
-					parts[0], objectName, err,
-				),
+func (this *ResizeHandler) resizeFile(bucketName, fileName string, options imageproxy.Options) ([]byte, *minio.ObjectInfo) {
+	reader, err := this.S3.GetObject(bucketName, fileName, minio.GetObjectOptions{})
+	defer reader.Close()
+
+	fileInfo, err := reader.Stat()
+	if err != nil {
+		//		c.AbortWithError(http.StatusInternalServerError, err)
+		return nil, nil
+	}
+
+	body, err := ioutil.ReadAll(reader)
+	if err != nil {
+		//		c.AbortWithError(http.StatusInternalServerError, err)
+		return nil, nil
+	}
+
+	finalImage, err := imageproxy.Transform(body, options)
+	if err != nil {
+		//		c.AbortWithError(http.StatusInternalServerError, err)
+		return nil, nil
+	}
+
+	return finalImage, &fileInfo
+}
+
+func (this *ResizeHandler) uploadFile(bucketName, fileName, contentType string, finalImage []byte) {
+	log.Printf("Upload started for %s/%s", bucketName, fileName)
+
+	_, err := this.S3.StatObject(bucketName, fileName, minio.StatObjectOptions{})
+
+	if err != nil {
+		errResp := err.(minio.ErrorResponse)
+		if errResp.Code != "NoSuchKey" {
+			// This is a legit error and log it
+			errorText := fmt.Errorf(
+				"Stat failed for %s/%s. %s: %s",
+				bucketName, fileName, errResp.Code, errResp.Message,
 			)
 			log.Printf(errorText.Error())
-			rollbar.RequestError(rollbar.ERR, reqCopy.Request, errorText)
+			rollbar.Error(rollbar.ERR, errorText)
+
 			return
 		}
+		// Otherwise carry on! 404 is good!
+		// Means this file doesn't exist yet
+	}
 
-		log.Printf("Upload finished for %s/%s", parts[0], objectName)
-	}(c.Copy())
+	//	buf := bytes.NewBuffer(finalImage)
+	reader := bytes.NewReader(finalImage)
+	_, err = this.S3.PutObject(bucketName, fileName, reader, int64(len(finalImage)), minio.PutObjectOptions{ContentType: contentType})
+	if err != nil {
+		errorText := fmt.Errorf(
+			"Upload failed for %s/%s with message: %s",
+			bucketName, fileName, err,
+		)
+		log.Printf(errorText.Error())
+		rollbar.Error(rollbar.ERR, errorText)
+		return
+	}
+
+	log.Printf("Upload finished for %s/%s", bucketName, fileName)
 }

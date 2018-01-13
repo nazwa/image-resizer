@@ -1,0 +1,33 @@
+{
+	"Debug": true,
+	"Port": "9020",
+	"Services": {
+		"AppName": "ImageProxy",
+		"Rollbar": {
+			"Token": "",
+			"Environment": "local"
+		},
+		"NewRelic": {
+			"Token": "9f8f661dee0599f58b5105cbb1c4d7309cf24bf9",
+			"Name": "Resizer - Dell",
+			"Verbose": false
+		},
+		"S3": {
+			"AccessKey": "AKIAJFQ57AOHOYM4VF5Q",
+			"SecretKey": "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",
+			"BucketUrl": "s3.amazonaws.com"			
+		}
+	},
+	"Service": {
+		"Name": "ImageProxy",
+		"DisplayName": "ImageProxy",
+		"Description": "ImageProxy",
+		"Dependencies": [
+		]
+	},
+	"Resizer": {
+		"ScaleUp": false,
+		"Cache": "s3://s3-eu-west-1.amazonaws.com",
+		"BaseUrl": "http://s3-eu-west-1.amazonaws.com"
+	}
+}

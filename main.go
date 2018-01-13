@@ -1,7 +1,11 @@
 package main
 
 import (
+	"io/ioutil"
+	"path/filepath"
+
 	"github.com/gin-gonic/gin"
+	"github.com/kardianos/osext"
 	"github.com/minio/minio-go"
 	"github.com/olebedev/config"
 	"github.com/sqs/s3"
@@ -37,6 +41,12 @@ func NewS3Cache(bucketURL string) *s3cache.Cache {
 	}
 }
 
+func Must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
 func main() {
 	// Parse config yaml string from ./conf.go
 	var err error
@@ -44,6 +54,25 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	// Dir is where the app was started. Handy
+	root, _ := osext.ExecutableFolder()
+
+	// We might have a file config
+	configFilePath := filepath.Join(root, "config.json")
+
+	// See if we have a file config, and if so - load it
+	if fileBytes, err := ioutil.ReadFile(configFilePath); err == nil {
+		// Parse the loaded file
+		fileConf, err := config.ParseJson(string(fileBytes))
+		Must(err)
+
+		// Extend current config with new values
+		cfg, err = cfg.Extend(fileConf)
+		Must(err)
+	}
+
+	// Load from env
 	cfg.Env()
 
 	rollbar.Token = cfg.UString("services.rollbar.token")
@@ -64,9 +93,7 @@ func main() {
 		cfg.UString("services.s3.secretKey"),
 		true,
 	)
-	if err != nil {
-		panic(err)
-	}
+	Must(err)
 
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -74,8 +101,6 @@ func main() {
 
 	NewResizeHandler(r.Group("/"), S3)
 
-	err = r.Run(":" + cfg.UString("port"))
-	if err != nil {
-		panic(err)
-	}
+	Must(r.Run(":" + cfg.UString("port")))
+
 }

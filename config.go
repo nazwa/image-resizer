@@ -23,11 +23,11 @@ services:
     token:
   s3:
     accessKey:
-	secretKey:
-	bucketUrl:
+    secretKey:
+    bucketUrl:
   newRelic:
     token:
-	verbose:
+    verbose:
 resizer:
   baseUrl:
   scaleUp:

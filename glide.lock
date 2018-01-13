@@ -1,0 +1,73 @@
+hash: 39b3872c67a1f56081a4c4c151c15f640bcf2f924eb141bc1f3c36fc7bbf8aef
+updated: 2017-03-20T16:26:56.3426625Z
+imports:
+- name: github.com/disintegration/imaging
+  version: ac27d1805a555e1754fa177216ee07f4e63c30b5
+- name: github.com/gin-gonic/gin
+  version: e2212d40c62a98b388a5eb48ecbdcf88534688ba
+  subpackages:
+  - binding
+  - render
+- name: github.com/golang/protobuf
+  version: 2402d76f3d41f928c7902a765dfc872356dd3aad
+  subpackages:
+  - proto
+- name: github.com/kardianos/osext
+  version: 9d302b58e975387d0b4d9be876622c86cefe64be
+- name: github.com/kardianos/service
+  version: ef06f2f890aa4f20d1ff55da91b29392ba6af3af
+- name: github.com/kr/http
+  version: 77bd98b60462aab91988ae155ecc11a74833f5b7
+  subpackages:
+  - transport
+- name: github.com/manucorporat/sse
+  version: ee05b128a739a0fb76c7ebd3ae4810c1de808d6d
+- name: github.com/mattn/go-isatty
+  version: 57fdcb988a5c543893cc61bce354a6e24ab70022
+- name: github.com/minio/minio-go
+  version: dcaae9ec4d0b0a81d17f22f6d7a186491f6a55ec
+  subpackages:
+  - pkg/policy
+  - pkg/s3signer
+  - pkg/s3utils
+  - pkg/set
+- name: github.com/sqs/s3
+  version: ee47412d98d9637046a7096f24809bc45f6bcbd5
+  subpackages:
+  - s3util
+- name: github.com/stvp/rollbar
+  version: d8cae2dd0eb0ce093eca83bfd2122f31e12694a0
+- name: github.com/yvasiyarov/go-metrics
+  version: c25f46c4b94079672242ec48a545e7ca9ebe3aec
+- name: github.com/yvasiyarov/gorelic
+  version: 4dc1bb7ab951bc884feb2c009092b1a454152355
+- name: github.com/yvasiyarov/newrelic_platform_go
+  version: 9c099fbc30e90de5bb5c5f94aa5fd08f2daeaacd
+- name: golang.org/x/image
+  version: fb59e5ba1052c469714bd4e918e7d8360aaa9642
+  subpackages:
+  - bmp
+  - tiff
+  - tiff/lzw
+- name: golang.org/x/net
+  version: f315505cf3349909cdf013ea56690da34e96a451
+  subpackages:
+  - context
+- name: golang.org/x/sys
+  version: 99f16d856c9836c42d24e7ab64ea72916925fa97
+  subpackages:
+  - unix
+  - windows
+  - windows/registry
+  - windows/svc
+  - windows/svc/eventlog
+  - windows/svc/mgr
+- name: gopkg.in/go-playground/validator.v8
+  version: c193cecd124b5cc722d7ee5538e945bdb3348435
+- name: gopkg.in/yaml.v2
+  version: a3f3340b5840cee44f372bddb5880fcbc419b46a
+- name: sourcegraph.com/sourcegraph/s3cache
+  version: 4150cc6b046500fb69804e34aa4a1ca8be361bcb
+- name: willnorris.com/go/gifresize
+  version: 6a222229fa0697e6da06ec80f8ffd0ada346669d
+testImports: []
