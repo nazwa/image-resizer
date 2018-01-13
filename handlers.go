@@ -6,7 +6,9 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -31,6 +33,13 @@ func NewResizeHandler(r *gin.RouterGroup, s3 *minio.Client) *ResizeHandler {
 	return u
 }
 
+func getResizedFileName(options, fullPath string) string {
+	clean := filepath.Clean(fullPath)
+	dir, file := filepath.Split(clean)
+
+	return strings.Replace(filepath.Join("_cache", dir, options, file), "\\", "/", -1)
+}
+
 func (this *ResizeHandler) Routes() {
 	this.RouterGroup.GET("/*path", this.Resize)
 }
@@ -43,8 +52,8 @@ func (this *ResizeHandler) Resize(c *gin.Context) {
 	path := c.Param("path")[1:] // strip leading slash
 
 	// first segment should be options
-	parts := strings.SplitN(path, "/", 3)
-	if len(parts) != 3 {
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 {
 		c.String(http.StatusBadRequest, "Too few path segments")
 		return
 	}
@@ -53,31 +62,42 @@ func (this *ResizeHandler) Resize(c *gin.Context) {
 	// 1: bucket images.kerrygold.enecdn.io
 	// 2: format 600x
 	// 3: asset b8a99f3580/Capture0019-7489-Edit.jpg
-	options := ParseOptions(parts[1])
+	options := ParseOptions(parts[0])
 	optionsString := options.String()
 
-	fmt.Println(options)
+	bucketName, _, _ := net.SplitHostPort(c.Request.Host)
 
-	bucketName := parts[0]
-	originalFileName := parts[2]
-	resizedFilename := optionsString + "/" + parts[2]
+	//	bucketName := c.Request.Host
+	originalFileName := parts[1]
+	//	resizedFilename := optionsString + "/" + parts[1]
+	resizedFileName := getResizedFileName(optionsString, parts[1])
 
-	if cachedFile := this.getCachedFile(bucketName, resizedFilename); cachedFile != nil {
-		fileInfo, err := cachedFile.Stat()
-		if err != nil {
-			c.AbortWithError(http.StatusInternalServerError, err)
+	if cachedFile, err := this.getCachedFile(bucketName, resizedFileName); err != nil {
+		c.Error(err)
+	} else {
+		defer cachedFile.Close()
+
+		if fileInfo, err := cachedFile.Stat(); err == nil {
+			if err != nil {
+				c.AbortWithError(http.StatusInternalServerError, err)
+				return
+			}
+
+			c.Header("Content-Type", fileInfo.ContentType)
+			c.Header("Content-Length", strconv.FormatInt(fileInfo.Size, 10))
+			c.Header("Last-Modified", fileInfo.LastModified.Format(http.TimeFormat))
+			c.Status(200)
+
+			io.Copy(c.Writer, cachedFile)
 			return
 		}
-
-		c.Header("Content-Type", fileInfo.ContentType)
-		//		c.Header("Content-Length", strconv.FormatInt(int64(buf.Len()), 10))
-		c.Header("Last-Modified", fileInfo.LastModified.Format(http.TimeFormat))
-		c.Status(200)
-
-		return
 	}
 
-	resizedFile, fileInfo := this.resizeFile(bucketName, originalFileName, options)
+	resizedFile, fileInfo, err := this.resizeFile(bucketName, originalFileName, options)
+	if err != nil {
+		c.AbortWithError(http.StatusNotFound, err)
+		return
+	}
 
 	buf := bytes.NewBuffer(resizedFile)
 
@@ -85,45 +105,39 @@ func (this *ResizeHandler) Resize(c *gin.Context) {
 	c.Header("Content-Length", strconv.FormatInt(int64(buf.Len()), 10))
 	c.Header("Last-Modified", fileInfo.LastModified.Format(http.TimeFormat))
 	c.Status(200)
+
 	io.Copy(c.Writer, buf)
 
-	go this.uploadFile(bucketName, resizedFilename, fileInfo.ContentType, resizedFile)
+	go this.uploadFile(bucketName, resizedFileName, fileInfo.ContentType, resizedFile)
 }
 
-func (this *ResizeHandler) getCachedFile(bucketName, fileName string) *minio.Object {
-	reader, _ := this.S3.GetObject(bucketName, fileName, minio.GetObjectOptions{})
-
-	return reader
+func (this *ResizeHandler) getCachedFile(bucketName, fileName string) (*minio.Object, error) {
+	return this.S3.GetObject(bucketName, fileName, minio.GetObjectOptions{})
 }
 
-func (this *ResizeHandler) resizeFile(bucketName, fileName string, options imageproxy.Options) ([]byte, *minio.ObjectInfo) {
+func (this *ResizeHandler) resizeFile(bucketName, fileName string, options imageproxy.Options) ([]byte, *minio.ObjectInfo, error) {
 	reader, err := this.S3.GetObject(bucketName, fileName, minio.GetObjectOptions{})
 	defer reader.Close()
 
 	fileInfo, err := reader.Stat()
 	if err != nil {
-		//		c.AbortWithError(http.StatusInternalServerError, err)
-		return nil, nil
+		return nil, nil, err
 	}
 
 	body, err := ioutil.ReadAll(reader)
 	if err != nil {
-		//		c.AbortWithError(http.StatusInternalServerError, err)
-		return nil, nil
+		return nil, nil, err
 	}
 
 	finalImage, err := imageproxy.Transform(body, options)
 	if err != nil {
-		//		c.AbortWithError(http.StatusInternalServerError, err)
-		return nil, nil
+		return nil, nil, err
 	}
 
-	return finalImage, &fileInfo
+	return finalImage, &fileInfo, nil
 }
 
 func (this *ResizeHandler) uploadFile(bucketName, fileName, contentType string, finalImage []byte) {
-	log.Printf("Upload started for %s/%s", bucketName, fileName)
-
 	_, err := this.S3.StatObject(bucketName, fileName, minio.StatObjectOptions{})
 
 	if err != nil {
@@ -134,7 +148,7 @@ func (this *ResizeHandler) uploadFile(bucketName, fileName, contentType string, 
 				"Stat failed for %s/%s. %s: %s",
 				bucketName, fileName, errResp.Code, errResp.Message,
 			)
-			log.Printf(errorText.Error())
+			log.Println(errorText.Error())
 			rollbar.Error(rollbar.ERR, errorText)
 
 			return
@@ -151,10 +165,8 @@ func (this *ResizeHandler) uploadFile(bucketName, fileName, contentType string, 
 			"Upload failed for %s/%s with message: %s",
 			bucketName, fileName, err,
 		)
-		log.Printf(errorText.Error())
+		log.Println(errorText.Error())
 		rollbar.Error(rollbar.ERR, errorText)
 		return
 	}
-
-	log.Printf("Upload finished for %s/%s", bucketName, fileName)
 }

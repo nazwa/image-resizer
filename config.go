@@ -24,13 +24,8 @@ services:
   s3:
     accessKey:
     secretKey:
-    bucketUrl:
+    endpoint:
   newRelic:
     token:
     verbose:
-resizer:
-  baseUrl:
-  scaleUp:
-  cache:  
-
 `

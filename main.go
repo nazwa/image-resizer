@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"path/filepath"
 
+	"github.com/gin-gonic/contrib/newrelic"
 	"github.com/gin-gonic/gin"
 	"github.com/kardianos/osext"
 	"github.com/minio/minio-go"
@@ -78,17 +79,17 @@ func main() {
 	rollbar.Token = cfg.UString("services.rollbar.token")
 	rollbar.Environment = cfg.UString("services.appName")
 
-	gorelicAgent = gorelic.NewAgent()
-	gorelicAgent.Verbose = cfg.UBool("services.newRelic.verbose")
-	gorelicAgent.NewrelicLicense = cfg.UString("services.newRelic.token")
-	gorelicAgent.NewrelicName = cfg.UString("services.appName")
+	//	gorelicAgent = gorelic.NewAgent()
+	//	gorelicAgent.Verbose = cfg.UBool("services.newRelic.verbose")
+	//	gorelicAgent.NewrelicLicense = cfg.UString("services.newRelic.token")
+	//	gorelicAgent.NewrelicName = cfg.UString("services.appName")
 
-	if gorelicAgent.NewrelicLicense != "" {
-		gorelicAgent.Run()
-	}
+	//	if gorelicAgent.NewrelicLicense != "" {
+	//		gorelicAgent.Run()
+	//	}
 
 	S3, err = minio.New(
-		cfg.UString("services.s3.bucketUrl"),
+		cfg.UString("services.s3.endpoint"),
 		cfg.UString("services.s3.accessKey"),
 		cfg.UString("services.s3.secretKey"),
 		true,
@@ -96,11 +97,15 @@ func main() {
 	Must(err)
 
 	r := gin.New()
+	r.Use(newrelic.NewRelic(
+		cfg.UString("services.newRelic.token"),
+		cfg.UString("services.appName"),
+		cfg.UBool("services.newRelic.verbose"),
+	))
 	r.Use(gin.Recovery())
 	r.Use(loggerMiddleware())
 
 	NewResizeHandler(r.Group("/"), S3)
 
 	Must(r.Run(":" + cfg.UString("port")))
-
 }
